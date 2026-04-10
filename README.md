@@ -2,7 +2,7 @@
 
 A bookmark manager built with Next.js, Supabase, and Tailwind CSS. Save, organize, and manage bookmarks with real-time sync across tabs — all behind Google authentication.
 
-**Live URL:** _[add your Vercel deployment URL here]_
+**Live URL:** https://smart-bookmarks-tawny.vercel.app
 
 ---
 
