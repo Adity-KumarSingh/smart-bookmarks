@@ -1,15 +1,19 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
-import { UrlMetadata } from "@/lib/types";
+import { Bookmark, UrlMetadata } from "@/lib/types";
 import { Globe, Loader2, Plus, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface AddBookmarkFormProps {
   userId: string;
+  onBookmarkAdded?: (bookmark: Bookmark) => void;
 }
 
-export default function AddBookmarkForm({ userId }: AddBookmarkFormProps) {
+export default function AddBookmarkForm({
+  userId,
+  onBookmarkAdded,
+}: AddBookmarkFormProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -104,15 +108,20 @@ export default function AddBookmarkForm({ userId }: AddBookmarkFormProps) {
     setSaving(true);
     try {
       const supabase = createClient();
-      const { error: insertError } = await supabase.from("bookmarks").insert({
-        user_id: userId,
-        url: normalizedUrl,
-        title: title.trim(),
-        description: description.trim() || null,
-        favicon_url: faviconUrl || null,
-      });
+      const { data: bookmark, error: insertError } = await supabase
+        .from("bookmarks")
+        .insert({
+          user_id: userId,
+          url: normalizedUrl,
+          title: title.trim(),
+          description: description.trim() || null,
+          favicon_url: faviconUrl || null,
+        })
+        .select("*")
+        .single();
 
       if (insertError) throw insertError;
+      if (bookmark) onBookmarkAdded?.(bookmark as Bookmark);
 
       setUrl("");
       setTitle("");

@@ -2,9 +2,10 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { Bookmark } from "@/lib/types";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import BookmarkCard from "./BookmarkCard";
 import { Bookmark as BookmarkIcon, Search } from "lucide-react";
+import AddBookmarkForm from "./AddBookmarkForm";
 
 interface BookmarkListProps {
   userId: string;
@@ -77,6 +78,13 @@ export default function BookmarkList({
     };
   }, [userId]);
 
+  const handleBookmarkAdded = useCallback((bookmark: Bookmark) => {
+    setBookmarks((prev) => {
+      if (prev.some((b) => b.id === bookmark.id)) return prev;
+      return [bookmark, ...prev];
+    });
+  }, []);
+
   const handleDelete = useCallback(async (id: string) => {
     setLoading(true);
     try {
@@ -113,6 +121,13 @@ export default function BookmarkList({
 
   return (
     <div>
+      <div className="mb-6">
+        <AddBookmarkForm
+          userId={userId}
+          onBookmarkAdded={handleBookmarkAdded}
+        />
+      </div>
+
       {bookmarks.length > 0 && (
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />

@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Header from "@/components/Header";
-import AddBookmarkForm from "@/components/AddBookmarkForm";
 import BookmarkList from "@/components/BookmarkList";
 
 export default async function DashboardPage() {
@@ -34,10 +33,6 @@ export default async function DashboardPage() {
       />
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-8">
-        <div className="mb-6">
-          <AddBookmarkForm userId={user.id} />
-        </div>
-
         <BookmarkList
           userId={user.id}
           initialBookmarks={bookmarks || []}
