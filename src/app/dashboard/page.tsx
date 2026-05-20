@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import Header from "@/components/Header";
 import BookmarkList from "@/components/BookmarkList";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+
 export default async function DashboardPage() {
   const supabase = await createClient();
 

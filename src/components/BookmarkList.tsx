@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { Bookmark } from "@/lib/types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import BookmarkCard from "./BookmarkCard";
 import { Bookmark as BookmarkIcon, Search } from "lucide-react";
 import AddBookmarkForm from "./AddBookmarkForm";
@@ -12,6 +12,14 @@ interface BookmarkListProps {
   initialBookmarks: Bookmark[];
 }
 
+const BOOKMARKS_SYNC_CHANNEL = "smart-bookmarks-sync";
+const BOOKMARKS_SYNC_STORAGE_KEY = "smart-bookmarks-sync-event";
+
+type BookmarkSyncEvent =
+  | { type: "added"; userId: string; bookmark: Bookmark }
+  | { type: "updated"; userId: string; bookmark: Bookmark }
+  | { type: "deleted"; userId: string; bookmarkId: string };
+
 export default function BookmarkList({
   userId,
   initialBookmarks,
@@ -19,6 +27,134 @@ export default function BookmarkList({
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(initialBookmarks);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const syncChannelRef = useRef<BroadcastChannel | null>(null);
+
+  useEffect(() => {
+    setBookmarks(initialBookmarks);
+  }, [initialBookmarks]);
+
+  const addBookmarkToState = useCallback((bookmark: Bookmark) => {
+    setBookmarks((prev) => {
+      if (prev.some((b) => b.id === bookmark.id)) return prev;
+      return [bookmark, ...prev];
+    });
+  }, []);
+
+  const updateBookmarkInState = useCallback((bookmark: Bookmark) => {
+    setBookmarks((prev) =>
+      prev.map((b) => (b.id === bookmark.id ? bookmark : b))
+    );
+  }, []);
+
+  const removeBookmarkFromState = useCallback((id: string) => {
+    setBookmarks((prev) => prev.filter((b) => b.id !== id));
+  }, []);
+
+  const fetchBookmarks = useCallback(async () => {
+    const supabase = createClient();
+
+    try {
+      const response = await fetch("/api/bookmarks", {
+        cache: "no-store",
+        credentials: "include",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
+      });
+
+      if (!response.ok) return;
+
+      const data: { bookmarks?: Bookmark[] } = await response.json();
+      setBookmarks(data.bookmarks || []);
+      return;
+    } catch {
+    }
+
+    const { data } = await supabase
+      .from("bookmarks")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (data) setBookmarks(data as Bookmark[]);
+  }, [userId]);
+
+  const applySyncEvent = useCallback(
+    (event: BookmarkSyncEvent) => {
+      if (event.userId !== userId) return;
+
+      if (event.type === "added") addBookmarkToState(event.bookmark);
+      if (event.type === "updated") updateBookmarkInState(event.bookmark);
+      if (event.type === "deleted") removeBookmarkFromState(event.bookmarkId);
+    },
+    [addBookmarkToState, removeBookmarkFromState, updateBookmarkInState, userId]
+  );
+
+  const broadcastSyncEvent = useCallback((event: BookmarkSyncEvent) => {
+    syncChannelRef.current?.postMessage(event);
+
+    try {
+      localStorage.setItem(
+        BOOKMARKS_SYNC_STORAGE_KEY,
+        JSON.stringify({ ...event, emittedAt: Date.now() })
+      );
+    } catch {
+      // Cross-tab sync is a fallback; Supabase realtime still handles remote updates.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if ("BroadcastChannel" in window) {
+      syncChannelRef.current = new BroadcastChannel(BOOKMARKS_SYNC_CHANNEL);
+      syncChannelRef.current.onmessage = (event) => {
+        applySyncEvent(event.data as BookmarkSyncEvent);
+      };
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== BOOKMARKS_SYNC_STORAGE_KEY || !event.newValue) return;
+
+      try {
+        applySyncEvent(JSON.parse(event.newValue) as BookmarkSyncEvent);
+      } catch {
+        return;
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      syncChannelRef.current?.close();
+      syncChannelRef.current = null;
+    };
+  }, [applySyncEvent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    void fetchBookmarks();
+
+    const handleFocus = () => {
+      void fetchBookmarks();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchBookmarks();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [fetchBookmarks]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -34,10 +170,7 @@ export default function BookmarkList({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          setBookmarks((prev) => {
-            if (prev.some((b) => b.id === payload.new.id)) return prev;
-            return [payload.new as Bookmark, ...prev];
-          });
+          addBookmarkToState(payload.new as Bookmark);
         }
       )
       .on(
@@ -49,9 +182,7 @@ export default function BookmarkList({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          setBookmarks((prev) =>
-            prev.filter((b) => b.id !== payload.old.id)
-          );
+          if (payload.old.id) removeBookmarkFromState(payload.old.id as string);
         }
       )
       .on(
@@ -63,11 +194,7 @@ export default function BookmarkList({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          setBookmarks((prev) =>
-            prev.map((b) =>
-              b.id === payload.new.id ? (payload.new as Bookmark) : b
-            )
-          );
+          updateBookmarkInState(payload.new as Bookmark);
         }
       )
       .subscribe();
@@ -76,14 +203,17 @@ export default function BookmarkList({
       channel.unsubscribe();
       supabase.removeChannel(channel);
     };
-  }, [userId]);
+  }, [
+    addBookmarkToState,
+    removeBookmarkFromState,
+    updateBookmarkInState,
+    userId,
+  ]);
 
   const handleBookmarkAdded = useCallback((bookmark: Bookmark) => {
-    setBookmarks((prev) => {
-      if (prev.some((b) => b.id === bookmark.id)) return prev;
-      return [bookmark, ...prev];
-    });
-  }, []);
+    addBookmarkToState(bookmark);
+    broadcastSyncEvent({ type: "added", userId, bookmark });
+  }, [addBookmarkToState, broadcastSyncEvent, userId]);
 
   const handleDelete = useCallback(async (id: string) => {
     setLoading(true);
@@ -92,23 +222,24 @@ export default function BookmarkList({
       const { error } = await supabase
         .from("bookmarks")
         .delete()
-        .eq("id", id);
+        .eq("id", id)
+        .eq("user_id", userId);
 
       if (error) throw error;
 
-      setBookmarks((prev) => prev.filter((b) => b.id !== id));
+      removeBookmarkFromState(id);
+      broadcastSyncEvent({ type: "deleted", userId, bookmarkId: id });
     } catch {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("bookmarks")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (data) setBookmarks(data);
+      await fetchBookmarks();
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [
+    broadcastSyncEvent,
+    fetchBookmarks,
+    removeBookmarkFromState,
+    userId,
+  ]);
 
   const filtered = search
     ? bookmarks.filter(

@@ -14,6 +14,8 @@ create index if not exists idx_bookmarks_created_at on public.bookmarks(created_
 
 alter table public.bookmarks enable row level security;
 
+alter table public.bookmarks replica identity full;
+
 create policy "Users can view own bookmarks"
   on public.bookmarks
   for select
